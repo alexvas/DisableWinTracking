@@ -444,19 +444,78 @@ def exception_hook(error, value, trace):
         error_dialog.Destroy()
         sys.exit(1)
 
+
+def isUserAdmin():
+    # WARNING: requires Windows XP SP2 or higher!
+    try:
+        return windll.shell32.IsUserAnAdmin()
+    except:
+        traceback.print_exc()
+        print "Admin check failed, assuming not an admin."
+        return False
+
+
+def runAsAdmin(cmdLine=None, wait=True):
+    import win32api, win32con, win32event, win32process
+    from win32com.shell.shell import ShellExecuteEx
+    from win32com.shell import shellcon
+
+    python_exe = sys.executable
+
+    if cmdLine is None:
+        cmdLine = [python_exe] + sys.argv
+    elif not (isinstance(cmdLine, tuple) or isinstance(cmdLine, list)):
+        return False
+    cmd = '"%s"' % (cmdLine[0],)
+    params = " ".join(['"%s"' % (x,) for x in cmdLine[1:]])
+    showCmd = win32con.SW_SHOWNORMAL
+    lpVerb = 'runas'  # causes UAC elevation prompt.
+
+    # print "Running", cmd, params
+
+    # ShellExecute() doesn't seem to allow us to fetch the PID or handle
+    # of the process, so we can't get anything useful from it. Therefore
+    # the more complex ShellExecuteEx() must be used.
+
+    # procHandle = win32api.ShellExecute(0, lpVerb, cmd, params, cmdDir, showCmd)
+
+    procInfo = ShellExecuteEx(nShow=showCmd,
+                              fMask=shellcon.SEE_MASK_NOCLOSEPROCESS,
+                              lpVerb=lpVerb,
+                              lpFile=cmd,
+                              lpParameters=params)
+
+    if wait:
+        procHandle = procInfo['hProcess']
+        obj = win32event.WaitForSingleObject(procHandle, win32event.INFINITE)
+        rc = win32process.GetExitCodeProcess(procHandle)
+    else:
+        rc = None
+
+    logger.info("Elevated script executed %s" % rc)
+
+    return True
+
+
 def check_elevated(silent=False):
-	if not bool(windll.advpack.IsNTAdmin(0, None)):
-		if not silent:
-			warn = wx.MessageDialog(parent=None,
-									message="Program requires elevation, please run it as an administrator.",
-									caption="ERROR!", style=wx.OK | wx.ICON_WARNING)
-			warn.ShowModal()
-			warn.Destroy()
-		else:
-			logger.info("You didn't run DWT as administrator. Don't bother posting an issue.")
-			logger.info("Please re-run as administrator.")
-		sys.exit(1)
-	
+    import os
+    if os.name != 'nt':
+        raise RuntimeError, "Unsupported operating system for this module: %s" % (os.name,)
+    if isUserAdmin():
+        return
+    if silent:
+        logger.info("You didn't run DWT as administrator. Don't bother posting an issue.")
+        logger.info("Please either re-run as administrator or out of silent mode")
+        sys.exit(1)
+
+    if not runAsAdmin():
+        warn = wx.MessageDialog(parent=None,
+                                message="Program requires elevation, please run it as an administrator.",
+                                caption="ERROR!", style=wx.OK | wx.ICON_WARNING)
+        warn.ShowModal()
+        warn.Destroy()
+
+
 def silent():
 
 	setup_logging()
